@@ -34,11 +34,32 @@ android {
     buildFeatures {
         compose true
     }
+    testOptions {
+        unitTests {
+            // 车载工具箱会用到 android.* 的静态方法（SystemClock、Log、Trace），
+            // 打开这个开关让 JVM 单测里这些 API 返回默认值而不是抛异常。
+            includeAndroidResources = true
+            returnDefaultValues = true
+        }
+    }
+    lint {
+        // 只关掉"版本新鲜度"这一类：它们比的是此刻市场上有没有更新的包，会随时间自己变红，
+        // 而评审要看的是"这次改动有没有引入问题"。
+        // 真正会崩的检查（NewApi / MissingPermission / SoonBlockedPrivateApi）一个都不关，
+        // abortOnError 保持默认 true：lint 报 error 就必须挡住构建，这条线不松。
+        disable 'GradleDependency', 'NewerVersionAvailable', 'AndroidGradlePluginVersion'
+        // 本机装了 android-37.1 平台，targetSdk 36 会被报 OldTargetApi；
+        // 升 targetSdk 是版本决策，不该由一次静态检查替我们决定。
+        disable 'OldTargetApi'
+    }
 }
 
 dependencies {
     implementation libs.androidx.core.ktx
     implementation libs.androidx.lifecycle.runtime.ktx
+    implementation libs.androidx.lifecycle.runtime.compose
+    implementation libs.androidx.lifecycle.viewmodel.compose
+    implementation libs.kotlinx.coroutines.android
     implementation libs.androidx.activity.compose
     implementation platform(libs.androidx.compose.bom)
     implementation libs.androidx.compose.ui
@@ -47,6 +68,7 @@ dependencies {
     implementation libs.androidx.compose.material3
     implementation libs.androidx.compose.material3.adaptive.navigation.suite
     testImplementation libs.junit
+    testImplementation libs.kotlinx.coroutines.test
     androidTestImplementation libs.androidx.junit
     androidTestImplementation libs.androidx.espresso.core
     androidTestImplementation platform(libs.androidx.compose.bom)

@@ -13,14 +13,30 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: set up JDK 11
+    # AGP 9.x + Gradle 9.3 的运行环境最低 JDK 17，模板默认的 JDK 11 会在配置阶段就失败。
+    # 目标拆成三步而不是一条 `./gradlew build`：单测、静态检查、打包各自失败时能直接看出是哪一环，
+    # 不用在一堆 up-to-date 任务里回捞第一个 FAILED。
+    - name: set up JDK 17
       uses: actions/setup-java@v4
       with:
-        java-version: '11'
+        java-version: '17'
         distribution: 'temurin'
         cache: gradle
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
-    - name: Build with Gradle
-      run: ./gradlew build
+    - name: Unit tests
+      run: ./gradlew :app:testDebugUnitTest --stacktrace
+    # lint 的 abortOnError 保持默认 true：NewApi / MissingPermission 这类会真崩的检查一旦报 error，
+    # CI 必须红。版本新鲜度类检查已在 app/build.gradle 的 lint{} 里关掉。
+    - name: Lint
+      run: ./gradlew :app:lintDebug --stacktrace
+    - name: Assemble debug
+      run: ./gradlew :app:assembleDebug --stacktrace
+    - name: Upload lint report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: lint-report
+        path: app/build/reports/lint-results-debug.html
+        if-no-files-found: ignore
