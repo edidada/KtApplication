@@ -13,6 +13,7 @@ import com.example.ktapplication.vehicle.data.json.optArray
 import com.example.ktapplication.vehicle.data.json.optBoolean
 import com.example.ktapplication.vehicle.data.json.optDouble
 import com.example.ktapplication.vehicle.data.json.optInt
+import com.example.ktapplication.vehicle.data.json.optLong
 import com.example.ktapplication.vehicle.data.json.optObject
 import com.example.ktapplication.vehicle.data.json.optString
 import com.example.ktapplication.vehicle.data.json.toJson
@@ -115,5 +116,56 @@ class MiniJsonTest {
         val arr = MiniJson.parse("""[1,"a",false]""") as JArray
         assertEquals(3, arr.size)
         assertEquals(false, (arr[2] as com.example.ktapplication.vehicle.data.json.JBool).value)
+    }
+
+    // ---- 追加：非有限值防线（与 core/NullSafety 的 finite* 系列配套）----
+
+    @Test
+    fun nonFiniteNumbersAreReportedAsMissingNotZero() {
+        // 网关把坏点写成字符串 "NaN" 时，旧写法的 toDoubleOrNull() 是**能解析成功**的
+        // （"NaN"/"Infinity" 都是合法字面量），于是 NaN 被一路送进仪表和告警判定。
+        val root = MiniJson.parseObject("""{"soc":"NaN","range":"Infinity","temp":"-Infinity","ok":"72.5"}""")
+        assertNull(root.optDouble("soc"))
+        assertNull(root.optDouble("range"))
+        assertNull(root.optDouble("temp"))
+        assertEquals(72.5, root.optDouble("ok") ?: error("缺 ok"), 1e-9)
+
+        // 数字字面量本身也可能非有限：1e999 是合法 JSON，落到 Double 就是 Infinity。
+        val overflow = MiniJson.parseObject("""{"big":1e999}""")
+        assertTrue((overflow.get("big") as JNumber).value.isInfinite())
+        assertNull(overflow.optDouble("big"))
+        assertNull(overflow.optInt("big"))
+        assertNull(overflow.optLong("big"))
+    }
+
+    @Test
+    fun intAccessorsNeverSaturateSilently() {
+        // 裸 Double.toInt() 会把 NaN 变成 0、把 3e9 饱和成 Int.MAX_VALUE —— 坏数据从此伪装成合法值。
+        val root = MiniJson.parseObject(
+            """{"nanish":"NaN","huge":"3000000000","decimal":"72.5","padded":"+007","fullwidth":"１２","zero":"0"}"""
+        )
+        assertEquals(72, root.optInt("decimal"))
+        assertEquals(7, root.optInt("padded"))
+        assertEquals(0, root.optInt("zero"))
+        assertNull(root.optInt("huge"))
+        assertNull(root.optInt("nanish"))
+        assertNull(root.optInt("fullwidth"))
+
+        // 直接构造非有限 JNumber（反射取值、进程内存重放都会给出这种脏对象）。
+        val synthetic = jObj("v" to JNumber(Double.NaN, "NaN"))
+        assertNull(synthetic.optInt("v"))
+        assertNull(synthetic.optDouble("v"))
+        // NaN 不是"真"，是"不知道"：布尔字段也必须是 null 而不是 true。
+        assertNull(synthetic.optBoolean("v"))
+        assertEquals(true, jObj("v" to JNumber(1.0, "1")).optBoolean("v"))
+        assertEquals(false, jObj("v" to JNumber(0.0, "0")).optBoolean("v"))
+    }
+
+    @Test
+    fun longKeepsPrecisionAndRejectsNonFinite() {
+        val root = MiniJson.parseObject("""{"ts":1700000000000,"sci":"1e7","inf":"Infinity"}""")
+        assertEquals(1_700_000_000_000L, root.optLong("ts"))
+        assertEquals(10_000_000L, root.optLong("sci"))
+        assertNull(root.optLong("inf"))
     }
 }

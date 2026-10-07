@@ -1,5 +1,10 @@
 package com.example.ktapplication.vehicle.data.json
 
+import com.example.ktapplication.core.finiteIntOrNull
+import com.example.ktapplication.core.finiteOrNull
+import com.example.ktapplication.core.toFiniteDoubleOrNull
+import com.example.ktapplication.core.toPlainIntOrNull
+
 /**
  * 极简 JSON 解析/序列化。
  *
@@ -67,27 +72,33 @@ fun JObject.optString(key: String): String? = when (val v = members[key]) {
 }
 
 fun JObject.optDouble(key: String): Double? = when (val v = members[key]) {
-    is JNumber -> v.value
+    // 数字分支也要过 finite：解析器允许 "1e999" 这种字面量（RFC 8259 不禁止），
+    // 它 toDouble 之后是 Infinity，直接给下游就是"续航无限大"。
+    is JNumber -> v.value.finiteOrNull()
     // 网关偶尔把数值序列化成字符串（"72.5"），能转就转，转不了才放弃。
-    is JString -> v.value.toDoubleOrNull()
+    // 注意这里不能用裸 toDoubleOrNull："NaN"/"Infinity" 是能解析成功的合法字面量。
+    is JString -> v.value.toFiniteDoubleOrNull()
     else -> null
 }
 
 fun JObject.optInt(key: String): Int? = when (val v = members[key]) {
-    is JNumber -> v.value.toInt()
-    is JString -> v.value.toIntOrNull() ?: v.value.toDoubleOrNull()?.toInt()
+    // 原来直接 v.value.toInt()：NaN 会静默变成 0、1e20 会饱和成 Int.MAX_VALUE，
+    // 于是"字段坏了"在 UI 上长得和"值为 0"一模一样。
+    is JNumber -> v.rawText.toPlainIntOrNull() ?: v.value.finiteIntOrNull()
+    is JString -> v.value.toPlainIntOrNull() ?: v.value.toFiniteDoubleOrNull()?.finiteIntOrNull()
     else -> null
 }
 
 fun JObject.optLong(key: String): Long? = when (val v = members[key]) {
-    is JNumber -> v.asLongOrNull() ?: v.value.toLong()
-    is JString -> v.value.toLongOrNull() ?: v.value.toDoubleOrNull()?.toLong()
+    is JNumber -> v.asLongOrNull() ?: v.value.finiteOrNull()?.toLong()
+    is JString -> v.value.toLongOrNull() ?: v.value.toFiniteDoubleOrNull()?.toLong()
     else -> null
 }
 
 fun JObject.optBoolean(key: String): Boolean? = when (val v = members[key]) {
     is JBool -> v.value
-    is JNumber -> if (v.value == 0.0) false else true
+    // 非有限值不能判成 true："NaN" 不是"真"，是"不知道"，交给上层按缺失兜底。
+    is JNumber -> v.value.finiteOrNull()?.let { it != 0.0 }
     is JString -> v.value.equals("true", ignoreCase = true) || v.value == "1"
     else -> null
 }
